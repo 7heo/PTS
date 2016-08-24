@@ -1,0 +1,107 @@
+#!/bin/sh
+
+# Dependencies:
+# - tput
+# - php
+
+RED="[31;1m"
+GREEN="[32;1m"
+YELLOW="[33;1m"
+NORMAL="[0m"
+PHP_INCLUDE_PATH=$(php -r 'echo get_include_path();')
+PROJDIR="$(pwd)"                  # Project dir
+CWD="${PROJDIR}/$(dirname -- $0)" # Test working dir
+SRCDIR="${PROJDIR}/src"           # Source dir
+
+DEBUG=0
+ERRORS=0
+OUTPUTONLY=0
+BREAKONFIRSTERROR=0
+TESTS="$CWD/test-*"
+ATLEASTONETESTEXECUTED=0
+HASFAILEDONCE=0
+
+usage() {
+	echo "$0 [options] [tests]" >&2
+	echo "" >&2
+	echo "  -b break on first error" >&2
+	echo "	-d debug output" >&2
+	echo "	-e errors only (with -d)" >&2
+	echo "	-o output only (with -d)" >&2
+	echo "	-h this help" >&2
+	echo "" >&2
+	exit $1
+}
+
+while true
+do
+	case $1 in
+	"-b")	BREAKONFIRSTERROR=1;;
+	"-d")	DEBUG=1;;
+	"-e")	ERRORS=1;;
+	"-o")	OUTPUTONLY=1;;
+	"-h")	usage 0;;
+	"--")	break;;
+	"-"*)	usage 2;;        # In order not to break when an option isn't recognized
+	*|"")	break;;
+	esac
+	shift
+done
+
+[ $DEBUG -eq 0 ] && OUTPUTONLY=0 # Those two statements are useless given the implementation of
+[ $DEBUG -eq 0 ] && ERRORS=0     # parse(), but they are here to ensure semantics.
+
+[ "$1" != "" ] && TESTS=""
+while [ "$1" != "" ]
+do
+	TESTS="$TESTS $CWD/$1"
+	shift
+done
+
+parse () {
+	if [ $DEBUG -eq 0 ]
+	then
+		sed "s~$PROJDIR/~~" | cmp -s - $test/output
+	elif [ $ERRORS -ne 0 ]
+	then
+		sed "s~$PROJDIR/~~" | grep -o "PHP .* on line [0-9]*" | tee /dev/fd/2 | cmp -s - $test/output
+	elif [ $OUTPUTONLY -ne 0 ]
+	then
+		sed "s~$PROJDIR/~~" | sed 's/PHP .* on line [0-9]*//g' | tee /dev/fd/2 | cmp -s - $test/output
+	else
+		sed "s~$PROJDIR/~~" | tee /dev/fd/2 | cmp -s - $test/output
+	fi
+}
+
+[ -d "$SRCDIR" ] && cd "$SRCDIR"
+for test in $TESTS
+do
+	MSG="Running $(basename $test)..."
+	[ $DEBUG -eq 0 ] && printf "$MSG"
+	if [ -d $test -a -f $test/exit_code -a -f $test/test.php -a -f $test/output ]
+	then
+		ATLEASTONETESTEXECUTED=1
+		php -d include_path="$PHP_INCLUDE_PATH:$test:$CWD/common" $test/test.php 2>&1 | parse
+		if [ $? -eq $(cat $test/exit_code) ]
+		then
+			COLOR=$GREEN
+			STATE="PASSED"
+			fail=0
+		else
+			COLOR=$RED
+			STATE="FAILED"
+			fail=1
+			HASFAILEDONCE=1
+		fi
+	else
+		COLOR=$YELLOW
+		STATE="SKIPPED"
+		fail=0
+	fi
+	COL=$(echo "$(tput cols)-${#MSG}+${#COLOR}+${#NORMAL}" | bc)
+	[ $DEBUG -eq 0 ] && printf "%${COL}s\n" "$COLOR$STATE$NORMAL"
+	[ $fail -eq 1 -a $BREAKONFIRSTERROR -eq 1 ] && exit 1
+done
+[ $ATLEASTONETESTEXECUTED -eq 0 ] && exit 2 # Exit 2 if all tests have been skipped
+[ $HASFAILEDONCE -eq 1 ] && exit 1          # Exit 1 if at least one test failed.
+exit 0
