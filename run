@@ -20,6 +20,7 @@ BREAKONFIRSTERROR=0
 TESTS="$CWD/test-*"
 ATLEASTONETESTEXECUTED=0
 HASFAILEDONCE=0
+PRE_EXEC_PHP=""
 
 usage() {
 	echo "$0 [options] [tests]" >&2
@@ -76,12 +77,13 @@ parse () {
 [ -d "$SRCDIR" ] && cd "$SRCDIR"
 for test in $TESTS
 do
+	PRE_EXEC_PHP="const TESTDIR = '$test';"
 	MSG="Running $(basename $test)..."
 	[ $DEBUG -eq 0 ] && printf "$MSG"
 	if [ -d $test -a -f $test/exit_code -a -f $test/test.php -a -f $test/output ]
 	then
 		ATLEASTONETESTEXECUTED=1
-		php -d include_path="$PHP_INCLUDE_PATH:$test:$CWD/common" $test/test.php 2>&1 | parse
+		sed "s~<?php~&\n$PRE_EXEC_PHP\n~" $test/test.php | php -d include_path="$PHP_INCLUDE_PATH:$test:$CWD/common" 2>&1 | parse
 		if [ $? -eq $(cat $test/exit_code) ]
 		then
 			COLOR=$GREEN
